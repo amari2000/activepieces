@@ -44,10 +44,10 @@ export const projectMemberController: FastifyPluginAsyncZod = async (
 
 
     app.delete('/:id', DeleteProjectMemberRequest, async (request, reply) => {
-        await projectMemberService(request.log).delete(
-            request.projectId,
-            request.params.id,
-        )
+        await projectMemberService(request.log).removeFromProject({
+            projectId: request.projectId,
+            memberId: request.params.id,
+        })
         await reply.status(StatusCodes.NO_CONTENT).send()
     })
 }
