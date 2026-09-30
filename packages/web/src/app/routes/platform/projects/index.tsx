@@ -1,13 +1,11 @@
 import { ProjectType, ProjectWithLimits } from '@activepieces/shared';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
-import { CheckIcon, Package, Pencil, Trash, UserCircle } from 'lucide-react';
+import { CheckIcon, Package, Pencil, Trash } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { platformApi } from '@/api/platforms-api';
 import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
 import {
   DataTable,
@@ -17,15 +15,6 @@ import {
 import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Item,
-  ItemMedia,
-  ItemContent,
-  ItemTitle,
-  ItemDescription,
-  ItemActions,
-} from '@/components/ui/item';
-import { Switch } from '@/components/ui/switch';
 import {
   Tooltip,
   TooltipContent,
@@ -43,10 +32,12 @@ import { formatUtils } from '@/lib/format-utils';
 import { validationUtils } from '@/lib/validation-utils';
 
 import { projectsTableColumns } from './columns';
+import { defaultProjectGuard } from './lib/default-project-guard';
 
 export default function ProjectsPage() {
-  const { platform, setCurrentPlatform } = platformHooks.useCurrentPlatform();
-  const queryClient = useQueryClient();
+  const { platform } = platformHooks.useCurrentPlatform();
+  const { personalProjectsActive, activeDefaultProjectIds } =
+    platformHooks.useNewMemberSettings();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { project: currentProject } =
@@ -81,23 +72,6 @@ export default function ProjectsPage() {
 
   const { data: allProjects } =
     projectCollectionUtils.useAllPlatformProjects(filters);
-
-  const {
-    mutate: toggleAutoCreatePersonalProjects,
-    isPending: isAutoCreatePersonalProjectsPending,
-  } = useMutation({
-    mutationFn: (autoCreatePersonalProjects: boolean) =>
-      platformApi.update({ autoCreatePersonalProjects }, platform.id),
-    onSuccess: (updatedPlatform) => {
-      setCurrentPlatform(queryClient, updatedPlatform);
-      toast.success(t('Automatic personal project creation updated'), {
-        duration: 3000,
-      });
-    },
-    onError: () => {
-      toast.error(t('Failed to save changes. Please try again.'));
-    },
-  });
 
   const [selectedRows, setSelectedRows] = useState<ProjectWithLimits[]>([]);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -254,9 +228,17 @@ export default function ProjectsPage() {
           _: RowDataWithActions<ProjectWithLimits>[],
           resetSelection: () => void,
         ) => {
-          const canDeleteAny = selectedRows.some(
-            (row) => row.id !== currentProject?.id,
+          const keptDefaultProject = defaultProjectGuard.projectToKeep({
+            selectedProjects: selectedRows,
+            defaultProjectIds: activeDefaultProjectIds,
+            autoCreatePersonalProjects: personalProjectsActive,
+          });
+          const deletableProjects = selectedRows.filter(
+            (row) =>
+              row.id !== currentProject?.id &&
+              row.id !== keptDefaultProject?.id,
           );
+          const canDeleteAny = deletableProjects.length > 0;
           return (
             <div onClick={(e) => e.stopPropagation()}>
               <ConfirmationDeleteDialog
@@ -266,10 +248,15 @@ export default function ProjectsPage() {
                 )}
                 entityName={t('Projects')}
                 buttonText={t('Delete')}
+                warning={
+                  keptDefaultProject
+                    ? t(
+                        "{project} won't be deleted. New members need at least one default project while personal projects are off.",
+                        { project: keptDefaultProject.displayName },
+                      )
+                    : undefined
+                }
                 mutationFn={async () => {
-                  const deletableProjects = selectedRows.filter(
-                    (row) => row.id !== currentProject?.id,
-                  );
                   projectCollectionUtils.delete(
                     deletableProjects.map((row) => row.id),
                   );
@@ -300,7 +287,12 @@ export default function ProjectsPage() {
         },
       },
     ],
-    [selectedRows, currentProject],
+    [
+      selectedRows,
+      currentProject,
+      activeDefaultProjectIds,
+      personalProjectsActive,
+    ],
   );
 
   const toolbarButtons = useMemo(
@@ -365,30 +357,6 @@ export default function ProjectsPage() {
         title={t('Projects')}
         description={t('Manage your automation projects')}
       />
-      <div className="px-6 pt-4">
-        <Item variant="outline">
-          <ItemMedia variant="icon">
-            <UserCircle />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>{t('Automatic personal project creation')}</ItemTitle>
-            <ItemDescription>
-              {t(
-                'Create a personal project for every new user on signup. Turn off if you provision users into team projects manually (e.g. via SSO or SCIM).',
-              )}
-            </ItemDescription>
-          </ItemContent>
-          <ItemActions>
-            <Switch
-              checked={platform.autoCreatePersonalProjects}
-              onCheckedChange={(checked) =>
-                toggleAutoCreatePersonalProjects(checked)
-              }
-              disabled={isAutoCreatePersonalProjectsPending}
-            />
-          </ItemActions>
-        </Item>
-      </div>
       <DataTable
         emptyStateTextTitle={t('No projects found')}
         emptyStateTextDescription={t(
